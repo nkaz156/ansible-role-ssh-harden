@@ -147,8 +147,10 @@ and test a new login before closing it.
 ## Testing
 
 Lint checks run as pre-commit hooks (`.pre-commit-config.yaml`): yamllint,
-ansible-lint on the production profile, gitleaks and basic file hygiene. Install
-them with `pip install pre-commit && pre-commit install`.
+ansible-lint on the production profile, gitleaks and basic file hygiene. The
+ansible-lint hook needs Python 3.14 on the machine (it pins
+`language_version: python3.14`). Install them with
+`pip install pre-commit && pre-commit install`.
 
 `.github/workflows/ci.yml` runs the same hooks, plus a gitleaks scan of the
 full history. It then runs `molecule test` for each scenario on Rocky Linux
