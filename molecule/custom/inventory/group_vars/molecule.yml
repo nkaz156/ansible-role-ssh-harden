@@ -17,7 +17,7 @@ ssh_harden_allow_group_members:
   sshusers:
     - deploy
   ops:
-    - operator
+    - opsadmin
 ssh_harden_lockout_check: true
 ssh_harden_permit_empty_passwords: false
 ssh_harden_login_grace_time: 45
@@ -44,13 +44,15 @@ ssh_harden_firewall_allowed_sources:
   - 2001:db8::/32
 
 # Test data for prepare.yml / verify.yml
+# Test users must not clash with system accounts (EL ships "operator" with
+# a nologin shell), or the login checks fail for reasons unrelated to sshd.
 ssh_harden_test_users:
   - deploy
-  - operator
+  - opsadmin
   - outsider
 ssh_harden_test_allowed_users:
   - deploy
-  - operator
+  - opsadmin
   - root # PermitRootLogin prohibit-password with a key, and in the root group
 ssh_harden_test_denied_users:
   - outsider
