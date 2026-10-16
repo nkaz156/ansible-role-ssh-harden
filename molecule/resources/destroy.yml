@@ -1,0 +1,14 @@
+---
+- name: Destroy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - always
+  tasks:
+    - name: Destroy molecule instances
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: true
+      loop: "{{ groups['molecule'] }}"

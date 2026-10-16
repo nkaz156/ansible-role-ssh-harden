@@ -1,0 +1,44 @@
+---
+- name: configure | Ensure sshd_config includes the drop-in directory first
+  ansible.builtin.lineinfile:
+    path: "{{ __ssh_harden_sshd_config }}"
+    regexp: '^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf\s*$'
+    line: "{{ __ssh_harden_include_line }}"
+    insertbefore: BOF
+    firstmatch: true
+    validate: "{{ __ssh_harden_sshd_bin }} -t -f %s"
+    backup: true
+  notify: Apply sshd configuration for ssh_harden
+
+# command: no module generates SSH host keys; `creates:` keeps it idempotent
+# and lets check mode report what would be generated.
+- name: configure | Generate missing host keys
+  ansible.builtin.command:
+    cmd: >-
+      ssh-keygen -q -N '' -t {{ item }}
+      {{ '-b 4096' if item == 'rsa' else '' }}
+      -f /etc/ssh/ssh_host_{{ item }}_key
+    creates: /etc/ssh/ssh_host_{{ item }}_key
+  loop: "{{ ssh_harden_host_key_types }}"
+  notify: Apply sshd configuration for ssh_harden
+
+- name: configure | Deploy warning banner
+  ansible.builtin.copy:
+    content: "{{ ssh_harden_banner_text | trim }}\n"
+    dest: "{{ ssh_harden_banner_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  when: ssh_harden_banner_enabled | bool
+
+- name: configure | Deploy sshd hardening drop-in
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/ssh-harden.conf.j2"
+    dest: "{{ __ssh_harden_sshd_config_dir }}/{{ __ssh_harden_dropin_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "{{ __ssh_harden_sshd_bin }} -t -f %s"
+    backup: true
+  notify: Apply sshd configuration for ssh_harden

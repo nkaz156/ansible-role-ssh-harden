@@ -1,0 +1,6 @@
+---
+collections:
+  # Only needed when ssh_harden_firewall_manage is true
+  - name: ansible.posix
+  # Only needed for the molecule tests
+  - name: community.docker

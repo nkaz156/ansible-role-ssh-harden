@@ -1,0 +1,95 @@
+---
+- name: groups | Validate access group settings
+  ansible.builtin.assert:
+    that:
+      - ssh_harden_allow_groups | length > 0
+      - ssh_harden_allow_group_members.keys() | difference(ssh_harden_allow_groups) | length == 0
+    fail_msg: >-
+      ssh_harden_allow_groups must not be empty, and every key of
+      ssh_harden_allow_group_members must also be listed in ssh_harden_allow_groups.
+    quiet: true
+
+- name: groups | Read local user database
+  ansible.builtin.getent:
+    database: passwd
+
+- name: groups | Ensure users to add to access groups exist
+  ansible.builtin.assert:
+    that:
+      - __ssh_harden_missing_users | length == 0
+    fail_msg: >-
+      These users in ssh_harden_allow_group_members do not exist:
+      {{ __ssh_harden_missing_users | join(', ') }}. The role does not create users.
+    quiet: true
+  vars:
+    __ssh_harden_missing_users: >-
+      {{ ssh_harden_allow_group_members.values() | flatten | unique
+         | difference(ansible_facts['getent_passwd'].keys()) }}
+
+# Runs before any change so a failed check leaves the host untouched.
+- name: groups | Run lockout check
+  when: ssh_harden_lockout_check | bool
+  block:
+    - name: groups | Read local group database
+      ansible.builtin.getent:
+        database: group
+
+    # A user passes AllowGroups through a supplementary membership, a primary
+    # group, or the memberships this role is about to add.
+    - name: groups | Determine users allowed to log in over SSH
+      ansible.builtin.set_fact:
+        __ssh_harden_allowed_users: >-
+          {{ (__ssh_harden_secondary_members + __ssh_harden_primary_members
+              + ssh_harden_allow_group_members.values() | flatten) | unique }}
+      vars:
+        __ssh_harden_groups: >-
+          {{ ansible_facts['getent_group'] | dict2items
+             | selectattr('key', 'in', ssh_harden_allow_groups) | list }}
+        __ssh_harden_gids: "{{ __ssh_harden_groups | map(attribute='value.1') | list }}"
+        __ssh_harden_secondary_members: >-
+          {{ __ssh_harden_groups | map(attribute='value.2') | map('split', ',')
+             | flatten | select | list }}
+        __ssh_harden_primary_members: >-
+          {{ ansible_facts['getent_passwd'] | dict2items
+             | selectattr('value.2', 'in', __ssh_harden_gids) | map(attribute='key') | list }}
+
+    - name: groups | Ensure at least one user can still log in
+      ansible.builtin.assert:
+        that:
+          - __ssh_harden_allowed_users | length > 0
+        fail_msg: >-
+          No user is a member of {{ ssh_harden_allow_groups | join(', ') }}, so
+          AllowGroups would deny every SSH login. Add users through
+          ssh_harden_allow_group_members, or set ssh_harden_lockout_check to false.
+        quiet: true
+
+    - name: groups | Ensure the Ansible connection user can still log in
+      ansible.builtin.assert:
+        that:
+          - ansible_user in __ssh_harden_allowed_users
+          - ansible_user != 'root' or ssh_harden_permit_root_login != 'no'
+        fail_msg: >-
+          Ansible connects as '{{ ansible_user }}', which would be locked out: it must
+          be in one of {{ ssh_harden_allow_groups | join(', ') }}, and root also needs
+          ssh_harden_permit_root_login other than "no". Connect as a non-root user in
+          an allowed group, or set ssh_harden_lockout_check to false.
+        quiet: true
+      when:
+        - ansible_connection | default('ssh') in ['ssh', 'smart', 'paramiko']
+        - ansible_user is defined
+
+- name: groups | Create SSH access groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ ssh_harden_allow_groups }}"
+  when: ssh_harden_create_allow_groups | bool
+
+- name: groups | Add users to SSH access groups
+  ansible.builtin.user:
+    name: "{{ item.1 }}"
+    groups: "{{ item.0.key }}"
+    append: true
+  loop: "{{ ssh_harden_allow_group_members | dict2items | subelements('value') }}"
+  loop_control:
+    label: "{{ item.1 }} -> {{ item.0.key }}"

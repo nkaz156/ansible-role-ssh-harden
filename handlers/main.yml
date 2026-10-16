@@ -1,0 +1,17 @@
+---
+# Both handlers listen to the same topic and run in the order defined here:
+# the complete configuration (main file plus all drop-ins) is validated
+# first, and a failure stops the play before sshd is reloaded.
+# command: no module validates sshd configuration; `sshd -t` only reads it,
+# hence changed_when: false.
+- name: Validate sshd configuration for ssh_harden
+  ansible.builtin.command:
+    cmd: "{{ __ssh_harden_sshd_bin }} -t"
+  changed_when: false
+  listen: Apply sshd configuration for ssh_harden
+
+- name: Reload sshd for ssh_harden
+  ansible.builtin.systemd_service:
+    name: "{{ __ssh_harden_service_name }}"
+    state: reloaded
+  listen: Apply sshd configuration for ssh_harden

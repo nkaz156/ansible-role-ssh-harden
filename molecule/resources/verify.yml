@@ -1,0 +1,392 @@
+---
+# Shared by all scenarios. Expected values are derived from the variables in
+# effect for the scenario (role defaults overridden by the scenario's
+# inventory/group_vars), so every scenario checks exactly what it configured.
+- name: Verify
+  hosts: molecule
+  gather_facts: true
+  tasks:
+    # Loads role defaults at role-default precedence, so scenario group_vars
+    # still win, plus the role's internal variables.
+    - name: Load ssh_harden variables
+      ansible.builtin.include_role:
+        name: ssh_harden
+        tasks_from: set_vars.yml
+        public: true
+
+    - name: Build expected sshd settings
+      ansible.builtin.set_fact:
+        ssh_harden_test_expected_single:
+          port: "{{ __ssh_harden_port }}"
+          passwordauthentication: "{{ ssh_harden_password_authentication | bool | ternary('yes', 'no') }}"
+          kbdinteractiveauthentication: "{{ ssh_harden_kbd_interactive_authentication | bool | ternary('yes', 'no') }}"
+          pubkeyauthentication: "{{ ssh_harden_pubkey_authentication | bool | ternary('yes', 'no') }}"
+          permitrootlogin: "{{ ssh_harden_permit_root_login }}"
+          permitemptypasswords: "{{ ssh_harden_permit_empty_passwords | bool | ternary('yes', 'no') }}"
+          logingracetime: "{{ ssh_harden_login_grace_time }}"
+          maxauthtries: "{{ ssh_harden_max_auth_tries }}"
+          x11forwarding: "{{ ssh_harden_x11_forwarding | bool | ternary('yes', 'no') }}"
+          allowagentforwarding: "{{ ssh_harden_allow_agent_forwarding | bool | ternary('yes', 'no') }}"
+          allowtcpforwarding: "{{ ssh_harden_allow_tcp_forwarding }}"
+          clientaliveinterval: "{{ ssh_harden_client_alive_interval }}"
+          clientalivecountmax: "{{ ssh_harden_client_alive_count_max }}"
+          banner: "{{ ssh_harden_banner_path if ssh_harden_banner_enabled | bool else 'none' }}"
+        ssh_harden_test_expected_allowgroups: "{{ ssh_harden_allow_groups }}"
+        ssh_harden_test_expected_hostkeys: >-
+          {{ ssh_harden_host_key_types | map('regex_replace', '^(.*)$', '/etc/ssh/ssh_host_\1_key') | list }}
+        # sshd -T prints lowercase names, and booleans as yes/no
+        ssh_harden_test_expected_extra: >-
+          {{ dict(ssh_harden_extra_options.keys() | map('lower')
+                  | zip(ssh_harden_extra_options.values() | map('string')
+                        | map('regex_replace', '^True$', 'yes')
+                        | map('regex_replace', '^False$', 'no'))) }}
+
+    # --- Effective sshd configuration -------------------------------------
+
+    # command: no module reports sshd's effective configuration; read-only.
+    - name: Read effective sshd configuration
+      ansible.builtin.command: "{{ __ssh_harden_sshd_bin }} -T"
+      register: ssh_harden_test_sshd_t
+      changed_when: false
+
+    # sshd -T prints PermitRootLogin prohibit-password under its legacy name
+    - name: Parse effective sshd configuration
+      ansible.builtin.set_fact:
+        ssh_harden_test_effective: >-
+          {{ ssh_harden_test_sshd_t.stdout_lines
+             | map('regex_replace', '^permitrootlogin without-password$', 'permitrootlogin prohibit-password')
+             | list }}
+
+    - name: Check single-value settings are in effect
+      ansible.builtin.assert:
+        that:
+          - (item.key ~ ' ' ~ item.value) in ssh_harden_test_effective
+        fail_msg: >-
+          Expected '{{ item.key }} {{ item.value }}', sshd reports
+          {{ ssh_harden_test_effective | select('match', item.key ~ ' ') | list }}
+        quiet: true
+      loop: "{{ ssh_harden_test_expected_single | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} {{ item.value }}"
+
+    - name: Check extra options are in effect
+      ansible.builtin.assert:
+        that:
+          - (item.key ~ ' ' ~ item.value) in ssh_harden_test_effective
+        fail_msg: >-
+          Expected '{{ item.key }} {{ item.value }}', sshd reports
+          {{ ssh_harden_test_effective | select('match', item.key ~ ' ') | list }}
+        quiet: true
+      loop: "{{ ssh_harden_test_expected_extra | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} {{ item.value }}"
+
+    - name: Check AllowGroups lists exactly the configured groups
+      ansible.builtin.assert:
+        that:
+          - __ssh_harden_test_actual | sort == ssh_harden_test_expected_allowgroups | sort
+        fail_msg: "Expected {{ ssh_harden_test_expected_allowgroups }}, sshd reports {{ __ssh_harden_test_actual }}"
+        quiet: true
+      vars:
+        __ssh_harden_test_actual: >-
+          {{ ssh_harden_test_effective | select('match', '^allowgroups ')
+             | map('regex_replace', '^allowgroups ', '') | list }}
+
+    - name: Check AllowUsers is not used
+      ansible.builtin.assert:
+        that:
+          - ssh_harden_test_effective | select('match', '^allowusers ') | list | length == 0
+        quiet: true
+
+    - name: Check sshd offers exactly the configured host keys
+      ansible.builtin.assert:
+        that:
+          - __ssh_harden_test_actual | sort == ssh_harden_test_expected_hostkeys | sort
+        fail_msg: "Expected {{ ssh_harden_test_expected_hostkeys }}, sshd reports {{ __ssh_harden_test_actual }}"
+        quiet: true
+      vars:
+        __ssh_harden_test_actual: >-
+          {{ ssh_harden_test_effective | select('match', '^hostkey ')
+             | map('regex_replace', '^hostkey ', '') | list }}
+
+    # --- Files ---------------------------------------------------------------
+
+    - name: Read sshd_config
+      ansible.builtin.slurp:
+        src: "{{ __ssh_harden_sshd_config }}"
+      register: ssh_harden_test_sshd_config
+
+    - name: Check sshd_config includes the drop-in directory before any setting
+      ansible.builtin.assert:
+        that:
+          - __ssh_harden_test_lines | first == __ssh_harden_include_line
+        quiet: true
+      vars:
+        __ssh_harden_test_lines: >-
+          {{ (ssh_harden_test_sshd_config['content'] | b64decode).splitlines()
+             | reject('match', '^\s*(#|$)') | list }}
+
+    - name: Find drop-ins that load before the role's drop-in
+      ansible.builtin.find:
+        paths: "{{ __ssh_harden_sshd_config_dir }}"
+        patterns: "*.conf"
+      register: ssh_harden_test_dropins
+
+    - name: Check the role's drop-in loads first
+      ansible.builtin.assert:
+        that:
+          - >-
+            ssh_harden_test_dropins.files | map(attribute='path') | map('basename') | sort | first
+            == __ssh_harden_dropin_file
+        quiet: true
+
+    - name: Stat files managed by the role
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      register: ssh_harden_test_files
+      loop: >-
+        {{ [{'path': __ssh_harden_sshd_config_dir ~ '/' ~ __ssh_harden_dropin_file, 'mode': '0600'}]
+           + ([{'path': ssh_harden_banner_path, 'mode': '0644'}] if ssh_harden_banner_enabled | bool else []) }}
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Check managed file ownership and permissions
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.pw_name == 'root'
+          - item.stat.gr_name == 'root'
+          - item.stat.mode == item.item.mode
+        quiet: true
+      loop: "{{ ssh_harden_test_files.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    - name: Read banner
+      ansible.builtin.slurp:
+        src: "{{ ssh_harden_banner_path }}"
+      register: ssh_harden_test_banner
+      when: ssh_harden_banner_enabled | bool
+
+    - name: Check banner text
+      ansible.builtin.assert:
+        that:
+          - ssh_harden_test_banner['content'] | b64decode == (ssh_harden_banner_text | trim) ~ '\n'
+        quiet: true
+      when: ssh_harden_banner_enabled | bool
+
+    - name: Stat host keys
+      ansible.builtin.stat:
+        path: /etc/ssh/ssh_host_{{ item }}_key
+      register: ssh_harden_test_host_keys
+      loop: "{{ ssh_harden_host_key_types }}"
+
+    - name: Check configured host keys exist
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Missing host key /etc/ssh/ssh_host_{{ item.item }}_key"
+        quiet: true
+      loop: "{{ ssh_harden_test_host_keys.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- Groups --------------------------------------------------------------
+
+    - name: Read group database
+      ansible.builtin.getent:
+        database: group
+
+    - name: Check allowed groups exist
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts['getent_group']
+        quiet: true
+      loop: "{{ ssh_harden_allow_groups }}"
+
+    - name: Check users were added to their groups
+      ansible.builtin.assert:
+        that:
+          - item.1 in ansible_facts['getent_group'][item.0.key][2].split(',')
+        quiet: true
+      loop: "{{ ssh_harden_allow_group_members | dict2items | subelements('value') }}"
+      loop_control:
+        label: "{{ item.1 }} in {{ item.0.key }}"
+
+    # --- Service -------------------------------------------------------------
+
+    - name: Check sshd is enabled and running
+      ansible.builtin.systemd_service:
+        name: "{{ __ssh_harden_service_name }}"
+        state: started
+        enabled: true
+      check_mode: true
+      register: ssh_harden_test_service
+      failed_when: ssh_harden_test_service is changed
+
+    - name: Check sshd listens on the SSH port
+      ansible.builtin.wait_for:
+        port: "{{ __ssh_harden_port }}"
+        timeout: 5
+
+    # --- Real logins ---------------------------------------------------------
+
+    # command: a real client login is the behaviour under test; read-only.
+    - name: Log in as users that must be allowed
+      ansible.builtin.command: >-
+        ssh -p {{ __ssh_harden_port }} -i /root/.ssh/molecule_ed25519 -o BatchMode=yes
+        -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ item }}@127.0.0.1 id -un
+      register: ssh_harden_test_allowed
+      changed_when: false
+      failed_when: ssh_harden_test_allowed.rc != 0 or ssh_harden_test_allowed.stdout != item
+      loop: "{{ ssh_harden_test_allowed_users }}"
+
+    # command: a real client login is the behaviour under test; read-only.
+    - name: Try logging in as users that must be denied
+      ansible.builtin.command: >-
+        ssh -p {{ __ssh_harden_port }} -i /root/.ssh/molecule_ed25519 -o BatchMode=yes
+        -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ item }}@127.0.0.1 true
+      register: ssh_harden_test_denied
+      changed_when: false
+      failed_when: >-
+        ssh_harden_test_denied.rc != 255
+        or 'Permission denied' not in ssh_harden_test_denied.stderr
+      loop: "{{ ssh_harden_test_denied_users }}"
+
+    # command: a real client login is the behaviour under test; read-only.
+    - name: Try logging in without a key
+      ansible.builtin.command: >-
+        ssh -p {{ __ssh_harden_port }} -o BatchMode=yes -o PubkeyAuthentication=no
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ ssh_harden_test_allowed_users | first }}@127.0.0.1 true
+      register: ssh_harden_test_nokey
+      changed_when: false
+      failed_when: ssh_harden_test_nokey.rc != 255
+
+    - name: Check offered authentication methods and banner
+      ansible.builtin.assert:
+        that:
+          - "'Permission denied (' in ssh_harden_test_nokey.stderr"
+          - ssh_harden_password_authentication | bool or 'password' not in __ssh_harden_test_methods
+          - >-
+            ssh_harden_kbd_interactive_authentication | bool
+            or 'keyboard-interactive' not in __ssh_harden_test_methods
+          - >-
+            (ssh_harden_banner_text | trim in ssh_harden_test_nokey.stderr)
+            == (ssh_harden_banner_enabled | bool)
+        fail_msg: "Unexpected ssh client output: {{ ssh_harden_test_nokey.stderr }}"
+        quiet: true
+      vars:
+        __ssh_harden_test_methods: >-
+          {{ ssh_harden_test_nokey.stderr | regex_search('Permission denied \(([^)]*)\)', '\1') | first }}
+
+    # --- Firewall ------------------------------------------------------------
+
+    - name: Check firewall restrictions
+      when: ssh_harden_firewall_manage | bool
+      block:
+        - name: Read runtime firewalld configuration
+          ansible.posix.firewalld_info:
+            zones:
+              - "{{ ssh_harden_firewall_zone }}"
+          register: ssh_harden_test_firewall_runtime
+
+        # command: ansible.posix.firewalld_info only reports the runtime
+        # configuration, so the permanent one is read with firewall-cmd; read-only.
+        - name: Read permanent firewalld configuration
+          ansible.builtin.command: >-
+            firewall-cmd --permanent --zone={{ ssh_harden_firewall_zone }} --list-{{ item }}
+          register: ssh_harden_test_firewall_permanent
+          changed_when: false
+          loop:
+            - services
+            - rich-rules
+
+        - name: Check SSH is only allowed from trusted sources
+          ansible.builtin.assert:
+            that:
+              - "'ssh' not in item.0.services"
+              - >-
+                ('rule family="' ~ ('ipv6' if ':' in item.1 else 'ipv4') ~ '" source address="'
+                ~ item.1 ~ '" service name="ssh" accept') in item.0.rich_rules
+            fail_msg: "firewalld {{ item.0.name }} configuration: {{ item.0 }}"
+            quiet: true
+          loop: "{{ __ssh_harden_test_configs | product(ssh_harden_firewall_allowed_sources) | list }}"
+          loop_control:
+            label: "{{ item.0.name }}: {{ item.1 }}"
+          vars:
+            __ssh_harden_test_zone: >-
+              {{ ssh_harden_test_firewall_runtime.firewalld_info.zones[ssh_harden_firewall_zone] }}
+            __ssh_harden_test_configs:
+              - name: runtime
+                services: "{{ __ssh_harden_test_zone.services }}"
+                rich_rules: "{{ __ssh_harden_test_zone.rich_rules }}"
+              - name: permanent
+                services: "{{ ssh_harden_test_firewall_permanent.results[0].stdout.split() }}"
+                rich_rules: "{{ ssh_harden_test_firewall_permanent.results[1].stdout_lines }}"
+
+    # --- Login method guard --------------------------------------------------
+
+    - name: Check the role refuses to disable every login method
+      block:
+        - name: Apply role with every login method disabled
+          ansible.builtin.include_role:
+            name: ssh_harden
+          vars:
+            ssh_harden_pubkey_authentication: false
+            ssh_harden_password_authentication: false
+            ssh_harden_kbd_interactive_authentication: false
+            ssh_harden_firewall_manage: false
+
+        - name: Fail because the login method guard did not trigger
+          ansible.builtin.fail:
+            msg: The role applied a configuration with no login method enabled.
+      rescue:
+        - name: Check the login method guard stopped the role
+          ansible.builtin.assert:
+            that:
+              - "'No login method would be left enabled' in ansible_failed_result.msg | default('')"
+            fail_msg: "Unexpected failure: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+            quiet: true
+
+    # --- Lockout guard -------------------------------------------------------
+
+    - name: Check the role refuses to lock everyone out
+      block:
+        - name: Apply role with an allowed group that has no members
+          ansible.builtin.include_role:
+            name: ssh_harden
+          vars:
+            ssh_harden_allow_groups:
+              - molecule_nobody
+            ssh_harden_allow_group_members: {}
+            ssh_harden_firewall_manage: false
+
+        - name: Fail because the lockout guard did not trigger
+          ansible.builtin.fail:
+            msg: The role applied an AllowGroups setting that no user could satisfy.
+      rescue:
+        - name: Check the lockout guard stopped the role
+          ansible.builtin.assert:
+            that:
+              - "'No user is a member of molecule_nobody' in ansible_failed_result.msg | default('')"
+            fail_msg: "Unexpected failure: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+            quiet: true
+
+    - name: Re-read group database
+      ansible.builtin.getent:
+        database: group
+
+    - name: Stat the drop-in again
+      ansible.builtin.stat:
+        path: "{{ __ssh_harden_sshd_config_dir }}/{{ __ssh_harden_dropin_file }}"
+      register: ssh_harden_test_dropin_after
+
+    - name: Check the guards ran before any change
+      ansible.builtin.assert:
+        that:
+          - "'molecule_nobody' not in ansible_facts['getent_group']"
+          - ssh_harden_test_dropin_after.stat.checksum == (ssh_harden_test_files.results | first).stat.checksum
+        quiet: true

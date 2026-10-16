@@ -1,0 +1,10 @@
+# Minimal systemd-enabled EL10 image for exercising the role.
+# Rocky Linux 10 needs an x86-64-v3 CPU; on older CPUs build with
+# --build-arg BASE_IMAGE=quay.io/almalinuxorg/almalinux:10 --platform linux/amd64/v2
+ARG BASE_IMAGE=docker.io/rockylinux/rockylinux:10.2
+FROM ${BASE_IMAGE}
+RUN dnf -y install --setopt=install_weak_deps=False systemd openssh-server python3 sudo \
+    && dnf clean all && rm -rf /var/cache/dnf \
+    && systemctl enable sshd
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/sbin/init"]

@@ -1,0 +1,8 @@
+---
+# Role variables come from the scenario's inventory/group_vars/molecule.yml.
+- name: Converge
+  hosts: molecule
+  tasks:
+    - name: Include role ssh_harden
+      ansible.builtin.include_role:
+        name: ssh_harden

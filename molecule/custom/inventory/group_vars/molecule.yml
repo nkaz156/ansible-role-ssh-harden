@@ -1,0 +1,56 @@
+---
+# Connection
+ansible_connection: community.docker.docker
+ansible_python_interpreter: /usr/bin/python3
+
+# Every role variable set away from its default, to prove each one reaches sshd.
+ssh_harden_password_authentication: false
+ssh_harden_kbd_interactive_authentication: false
+ssh_harden_pubkey_authentication: true
+ssh_harden_permit_root_login: prohibit-password
+ssh_harden_allow_groups:
+  - sshusers
+  - ops
+  - root
+ssh_harden_create_allow_groups: true
+ssh_harden_allow_group_members:
+  sshusers:
+    - deploy
+  ops:
+    - operator
+ssh_harden_lockout_check: true
+ssh_harden_permit_empty_passwords: false
+ssh_harden_login_grace_time: 45
+ssh_harden_max_auth_tries: 4
+ssh_harden_x11_forwarding: true
+ssh_harden_allow_agent_forwarding: true
+ssh_harden_allow_tcp_forwarding: local
+ssh_harden_host_key_types:
+  - ed25519
+  - ecdsa
+ssh_harden_client_alive_interval: 120
+ssh_harden_client_alive_count_max: 3
+ssh_harden_banner_enabled: false
+ssh_harden_banner_path: /etc/ssh/banner
+ssh_harden_banner_text: unused
+ssh_harden_extra_options:
+  MaxSessions: 4
+  PermitTunnel: false
+  LogLevel: VERBOSE
+ssh_harden_firewall_manage: true
+ssh_harden_firewall_zone: public
+ssh_harden_firewall_allowed_sources:
+  - 10.0.0.0/8
+  - 2001:db8::/32
+
+# Test data for prepare.yml / verify.yml
+ssh_harden_test_users:
+  - deploy
+  - operator
+  - outsider
+ssh_harden_test_allowed_users:
+  - deploy
+  - operator
+  - root # PermitRootLogin prohibit-password with a key, and in the root group
+ssh_harden_test_denied_users:
+  - outsider

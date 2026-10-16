@@ -1,0 +1,27 @@
+---
+# Facts required by this role
+__ssh_harden_required_facts:
+  - distribution
+  - distribution_major_version
+  - distribution_version
+  - os_family
+
+__ssh_harden_packages:
+  - openssh-server
+__ssh_harden_service_name: sshd
+__ssh_harden_sshd_bin: /usr/sbin/sshd
+__ssh_harden_sshd_config: /etc/ssh/sshd_config
+__ssh_harden_sshd_config_dir: /etc/ssh/sshd_config.d
+__ssh_harden_include_line: Include /etc/ssh/sshd_config.d/*.conf
+
+# sshd uses the first value it reads for each directive, and the distro ships
+# drop-ins such as 25-permitrootlogin.conf (PermitRootLogin yes) on EL10,
+# so this file must sort first.
+__ssh_harden_dropin_file: 01-ssh-harden.conf
+
+# The SSH port is intentionally fixed
+__ssh_harden_port: 22
+
+__ssh_harden_firewall_packages:
+  - firewalld
+  - python3-firewall

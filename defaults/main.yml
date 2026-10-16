@@ -1,0 +1,63 @@
+---
+# Authentication (key-based only)
+ssh_harden_password_authentication: false
+ssh_harden_kbd_interactive_authentication: false
+ssh_harden_pubkey_authentication: true
+
+# Root login: "no" or "prohibit-password" (keys only)
+ssh_harden_permit_root_login: "no"
+
+# Groups allowed to log in over SSH (rendered as AllowGroups).
+# Users outside these groups are denied, so make sure your own account is in one.
+ssh_harden_allow_groups:
+  - sshusers
+
+# Create the groups in ssh_harden_allow_groups if they do not exist
+ssh_harden_create_allow_groups: true
+
+# Existing users to add to the allowed groups, keyed by group name. Example:
+#   ssh_harden_allow_group_members:
+#     sshusers:
+#       - deploy
+#       - admin
+# Users must already exist; the role never creates users.
+ssh_harden_allow_group_members: {}
+
+# Fail before changing anything if the change would lock everyone out:
+# no allowed group has members, or the user Ansible connects as over SSH is not in one.
+ssh_harden_lockout_check: true
+
+ssh_harden_permit_empty_passwords: false
+ssh_harden_login_grace_time: 30
+ssh_harden_max_auth_tries: 3
+
+# Forwarding
+ssh_harden_x11_forwarding: false
+ssh_harden_allow_agent_forwarding: false
+# One of "no", "yes", "local", "remote", "all"
+ssh_harden_allow_tcp_forwarding: "no"
+
+# Host key types sshd offers (rendered as HostKey). Missing keys are generated
+# (RSA at 4096 bits). Leave out ecdsa to avoid it.
+ssh_harden_host_key_types:
+  - ed25519
+  - rsa
+
+# Idle timeout: interval * count_max seconds (10 minutes by default)
+ssh_harden_client_alive_interval: 300
+ssh_harden_client_alive_count_max: 2
+
+# Pre-authentication warning banner
+ssh_harden_banner_enabled: true
+ssh_harden_banner_path: /etc/ssh/banner
+ssh_harden_banner_text: Authorized access only. All activity is monitored and logged.
+
+# Extra sshd directives to add to the drop-in, e.g. {"MaxSessions": 4}
+ssh_harden_extra_options: {}
+
+# Restrict SSH at the firewall (firewalld) to the listed source addresses/CIDRs.
+# When enabled, the zone's general "ssh" service is removed and replaced by
+# per-source rich rules, so the list must include the hosts you manage from.
+ssh_harden_firewall_manage: false
+ssh_harden_firewall_zone: public
+ssh_harden_firewall_allowed_sources: []

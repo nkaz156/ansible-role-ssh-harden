@@ -1,0 +1,4 @@
+# Test tooling for molecule, pinned for reproducible CI (kept current by Dependabot)
+ansible-core==2.21.5
+molecule==26.10.0
+molecule-plugins[docker]==26.10.12

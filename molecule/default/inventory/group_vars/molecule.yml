@@ -1,0 +1,19 @@
+---
+# Connection
+ansible_connection: community.docker.docker
+ansible_python_interpreter: /usr/bin/python3
+
+# Role defaults, plus the one input that has no safe default: who may log in.
+ssh_harden_allow_group_members:
+  sshusers:
+    - deploy
+
+# Test data for prepare.yml / verify.yml
+ssh_harden_test_users:
+  - deploy
+  - outsider
+ssh_harden_test_allowed_users:
+  - deploy
+ssh_harden_test_denied_users:
+  - outsider # valid key, not in an allowed group
+  - root # PermitRootLogin no, and not in an allowed group

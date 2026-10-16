@@ -1,0 +1,46 @@
+---
+# Creates the test users from ssh_harden_test_users and a client key for root,
+# authorized for every test user and root, so verify.yml can try real logins.
+# Users get a random password too, so password logins would work if sshd
+# allowed them.
+- name: Prepare
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Install SSH client
+      ansible.builtin.package:
+        name: openssh-clients
+        state: present
+
+    - name: Create test users
+      ansible.builtin.user:
+        name: "{{ item }}"
+        password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24) | password_hash('sha512') }}"
+        update_password: on_create
+      loop: "{{ ssh_harden_test_users }}"
+
+    - name: Create SSH directory for root
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # command: no builtin module generates SSH keys (community.crypto is not a
+    # dependency); `creates:` keeps it idempotent.
+    - name: Generate test client key
+      ansible.builtin.command:
+        cmd: ssh-keygen -q -t ed25519 -N '' -f /root/.ssh/molecule_ed25519
+        creates: /root/.ssh/molecule_ed25519
+
+    - name: Read test client public key
+      ansible.builtin.slurp:
+        src: /root/.ssh/molecule_ed25519.pub
+      register: ssh_harden_test_pubkey
+
+    - name: Authorize test client key
+      ansible.posix.authorized_key:
+        user: "{{ item }}"
+        key: "{{ ssh_harden_test_pubkey['content'] | b64decode }}"
+      loop: "{{ ssh_harden_test_users + ['root'] }}"

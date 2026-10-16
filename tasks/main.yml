@@ -1,0 +1,48 @@
+---
+- name: Set platform/version specific variables
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/set_vars.yml"
+
+- name: Ensure the target is a supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution_major_version'] | int >= 9
+    fail_msg: >-
+      ssh_harden supports RHEL-family 9 and 10 only, not
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+    quiet: true
+
+# With every authentication method off, sshd would accept no logins at all.
+- name: Ensure at least one login method stays enabled
+  ansible.builtin.assert:
+    that:
+      - >-
+        ssh_harden_pubkey_authentication | bool
+        or ssh_harden_password_authentication | bool
+        or ssh_harden_kbd_interactive_authentication | bool
+    fail_msg: >-
+      No login method would be left enabled. Set at least one of
+      ssh_harden_pubkey_authentication (recommended),
+      ssh_harden_password_authentication or
+      ssh_harden_kbd_interactive_authentication to true.
+    quiet: true
+
+- name: Install OpenSSH server
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/install.yml"
+
+- name: Manage SSH access groups
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/groups.yml"
+
+# In check mode on a host without openssh-server, the install above is only
+# simulated, so there is no sshd_config or sshd unit to inspect yet.
+- name: Configure sshd
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/configure.yml"
+  when: not (ansible_check_mode and __ssh_harden_install is changed)
+
+- name: Restrict SSH at the firewall
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/firewall.yml"
+  when: ssh_harden_firewall_manage | bool
+
+- name: Ensure sshd is running
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/service.yml"
+  when: not (ansible_check_mode and __ssh_harden_install is changed)

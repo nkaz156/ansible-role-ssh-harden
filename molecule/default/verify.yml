@@ -1,0 +1,3 @@
+---
+- name: Run shared verify playbook
+  ansible.builtin.import_playbook: ../resources/verify.yml

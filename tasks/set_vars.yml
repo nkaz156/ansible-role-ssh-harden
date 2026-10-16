@@ -1,0 +1,16 @@
+---
+- name: set_vars | Ensure ansible_facts used by role
+  ansible.builtin.setup:
+    gather_subset: min
+  when: __ssh_harden_required_facts | difference(ansible_facts.keys() | list) | length > 0
+
+- name: set_vars | Set platform/version specific variables
+  ansible.builtin.include_vars: "{{ __ssh_harden_vars_file }}"
+  loop:
+    - "{{ ansible_facts['os_family'] }}.yml"
+    - "{{ ansible_facts['distribution'] }}.yml"
+    - "{{ ansible_facts['distribution'] }}_{{ ansible_facts['distribution_major_version'] }}.yml"
+    - "{{ ansible_facts['distribution'] }}_{{ ansible_facts['distribution_version'] }}.yml"
+  vars:
+    __ssh_harden_vars_file: "{{ role_path }}/vars/{{ item }}"
+  when: __ssh_harden_vars_file is file

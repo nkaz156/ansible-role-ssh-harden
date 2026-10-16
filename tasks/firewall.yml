@@ -1,0 +1,47 @@
+---
+- name: firewall | Validate firewall settings
+  ansible.builtin.assert:
+    that:
+      - ssh_harden_firewall_allowed_sources | length > 0
+    fail_msg: >-
+      ssh_harden_firewall_manage is enabled but ssh_harden_firewall_allowed_sources
+      is empty, which would block all SSH traffic.
+    quiet: true
+
+- name: firewall | Install firewalld
+  ansible.builtin.package:
+    name: "{{ __ssh_harden_firewall_packages }}"
+    state: present
+  register: __ssh_harden_firewall_install
+
+# In check mode on a host without firewalld, the install above is only
+# simulated, so there is no firewalld service or Python binding to use yet.
+- name: firewall | Configure firewalld
+  when: not (ansible_check_mode and __ssh_harden_firewall_install is changed)
+  block:
+    - name: firewall | Ensure firewalld is enabled and running
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    # Add the per-source rules before removing the open ssh service so the
+    # current connection is never cut off mid-run.
+    - name: firewall | Allow SSH from trusted sources
+      ansible.posix.firewalld:
+        zone: "{{ ssh_harden_firewall_zone }}"
+        rich_rule: >-
+          rule family="{{ 'ipv6' if ':' in item else 'ipv4' }}"
+          source address="{{ item }}" service name="ssh" accept
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ ssh_harden_firewall_allowed_sources }}"
+
+    - name: firewall | Remove unrestricted SSH access
+      ansible.posix.firewalld:
+        zone: "{{ ssh_harden_firewall_zone }}"
+        service: ssh
+        permanent: true
+        immediate: true
+        state: disabled

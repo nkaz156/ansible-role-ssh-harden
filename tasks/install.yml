@@ -1,0 +1,6 @@
+---
+- name: install | Install OpenSSH server packages
+  ansible.builtin.package:
+    name: "{{ __ssh_harden_packages }}"
+    state: present
+  register: __ssh_harden_install

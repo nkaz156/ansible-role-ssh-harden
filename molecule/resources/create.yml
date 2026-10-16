@@ -1,0 +1,63 @@
+---
+# Shared by all scenarios. One systemd container is created per host in the
+# scenario inventory's "molecule" group.
+#
+# SSH_HARDEN_TEST_IMAGE picks the base image (default: Rocky Linux 10.2, which
+# needs an x86-64-v3 CPU).
+- name: Create
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - always
+  vars:
+    ssh_harden_test_base_image: >-
+      {{ lookup('ansible.builtin.env', 'SSH_HARDEN_TEST_IMAGE')
+         | default('docker.io/rockylinux/rockylinux:10.2', true) }}
+    ssh_harden_test_image: >-
+      ssh-harden-molecule:{{ ssh_harden_test_base_image | regex_replace('[^A-Za-z0-9_.-]', '_') }}
+  tasks:
+    - name: Build systemd test image
+      community.docker.docker_image:
+        name: "{{ ssh_harden_test_image }}"
+        source: build
+        build:
+          path: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/molecule/resources"
+          dockerfile: Containerfile
+          pull: true
+          args:
+            BASE_IMAGE: "{{ ssh_harden_test_base_image }}"
+      register: ssh_harden_test_build
+      retries: 3
+      delay: 10
+      until: ssh_harden_test_build is succeeded
+
+    - name: Create molecule instances
+      community.docker.docker_container:
+        name: "{{ item }}"
+        hostname: "{{ item }}"
+        image: "{{ ssh_harden_test_image }}"
+        command: /usr/sbin/init
+        cgroupns_mode: host
+        volumes:
+          - /sys/fs/cgroup:/sys/fs/cgroup:rw
+        tmpfs:
+          - /run
+          - /tmp
+        # Needed by firewalld in the scenarios that manage the firewall
+        capabilities:
+          - NET_ADMIN
+          - NET_RAW
+        labels:
+          owner: molecule
+        state: started
+      loop: "{{ groups['molecule'] }}"
+
+    - name: Wait for systemd to finish booting
+      community.docker.docker_container_exec:
+        container: "{{ item }}"
+        command: systemctl is-system-running --wait
+      register: ssh_harden_test_boot
+      changed_when: false
+      failed_when: ssh_harden_test_boot.stdout not in ['running', 'degraded']
+      loop: "{{ groups['molecule'] }}"

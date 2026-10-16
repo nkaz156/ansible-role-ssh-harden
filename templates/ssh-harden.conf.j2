@@ -1,0 +1,42 @@
+{{ ansible_managed | comment }}
+#
+# sshd uses the first value it reads for each directive, so this file is
+# named to load before the distribution drop-ins in this directory.
+
+Port {{ __ssh_harden_port }}
+
+# Authentication
+PasswordAuthentication {{ ssh_harden_password_authentication | bool | ternary('yes', 'no') }}
+KbdInteractiveAuthentication {{ ssh_harden_kbd_interactive_authentication | bool | ternary('yes', 'no') }}
+PubkeyAuthentication {{ ssh_harden_pubkey_authentication | bool | ternary('yes', 'no') }}
+PermitRootLogin {{ ssh_harden_permit_root_login }}
+PermitEmptyPasswords {{ ssh_harden_permit_empty_passwords | bool | ternary('yes', 'no') }}
+LoginGraceTime {{ ssh_harden_login_grace_time }}
+MaxAuthTries {{ ssh_harden_max_auth_tries }}
+
+# Access
+AllowGroups {{ ssh_harden_allow_groups | join(' ') }}
+
+# Forwarding
+X11Forwarding {{ ssh_harden_x11_forwarding | bool | ternary('yes', 'no') }}
+AllowAgentForwarding {{ ssh_harden_allow_agent_forwarding | bool | ternary('yes', 'no') }}
+AllowTcpForwarding {{ ssh_harden_allow_tcp_forwarding }}
+
+# Host keys
+{% for type in ssh_harden_host_key_types %}
+HostKey /etc/ssh/ssh_host_{{ type }}_key
+{% endfor %}
+
+# Idle timeout
+ClientAliveInterval {{ ssh_harden_client_alive_interval }}
+ClientAliveCountMax {{ ssh_harden_client_alive_count_max }}
+
+# Banner
+Banner {{ ssh_harden_banner_path if ssh_harden_banner_enabled | bool else 'none' }}
+{% if ssh_harden_extra_options %}
+
+# Extra options
+{% for key, value in ssh_harden_extra_options.items() %}
+{{ key }} {{ value | ternary('yes', 'no') if value is boolean else value }}
+{% endfor %}
+{% endif %}
