@@ -1,0 +1,2 @@
+# Lint tooling for the CI lint job, pinned for reproducible CI (kept current by Dependabot)
+pre-commit==4.7.0
